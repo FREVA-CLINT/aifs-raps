@@ -1,4 +1,16 @@
-# AIFS-RAPS
+# DWD's fork of the AIFS-RAPS
+This code measures the system performance of Anemoi trainings indicative for training AICON.
+
+1. `cd aifs-raps`
+2. Create a configuration for your system: `arch/foo/bar/aifs_env.sh`
+3. `./aifs-build --build-dir build --arch arch/foo/bar`
+4. Expand training data using `./bin/aifs-clone-dataset /my-path-to/aifs-benchmarking-ea-an-oper-0001-mars-o800-2023-2023-6h-v1.zarr/ /my-path-to/aifs-benchmarking-o800-10years-cloned.zarr 14240`
+5. `cd launchers/SLURM/DWD2026`
+6. `sbatch throughput.DWD2026.slurm`
+
+-------------------------------------------------------------------------------
+
+# Original README:
 
 > \[!IMPORTANT\]
 > This software is **Incubating** and subject to ECMWF's guidelines on [Software Maturity](https://github.com/ecmwf/codex/raw/refs/heads/main/Project%20Maturity).
@@ -21,7 +33,7 @@ It includes utility scripts to generate synthetic input data, post-process bench
 AIFS-RAPS is intended to benchmark AIFS performance on different systems. It is not intended to launch scientific workflows. 
 
 ## Documentation
-The documentation can be found [here](https://git.ecmwf.int/users/naco/repos/raps-doc/browse?at=anemoi-docs)
+The documentation can be found [here](https://anemoi.readthedocs.io/en/latest/)
 
 ## License
 ```

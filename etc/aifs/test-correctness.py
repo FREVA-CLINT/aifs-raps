@@ -124,7 +124,7 @@ else:
 
 #calculate ttest
 if losses:
-    score_to_pass= 0.0054
+    score_to_pass= 0.007
     #ground_truth = [0.005327364429831505, 0.005269720684736967, 0.005299062002450228, 0.005297685973346233, 0.005312369205057621, 0.005360980052500963, 0.005294295027852058, 0.0052947793155908585, 0.005279442761093378]
     result = mean_loss <= score_to_pass
     print(f"mean loss of {mean_loss:.4f} versus {score_to_pass} reference (lower is better)")

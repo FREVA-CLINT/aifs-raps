@@ -1,5 +1,6 @@
 #!/bin/bash
 # (C) Copyright 2025- ECMWF.
+# (C) Copyright 2026- DWD.
 #
 # This software is licensed under the terms of the Apache Licence Version 2.0
 # which can be obtained at http://www.apache.org/licenses/LICENSE-2.0.
@@ -535,14 +536,22 @@ fi
 
 ulimit -c 0 # disable core dumps
 
-printenv | tee $rundir/env.txt
+printenv > $rundir/env.txt
 
 train_exit_code=0
 echo "finally running, outputting to rundir=$rundir"
 start_time=$(date +%s)
 echo "Start time: $start_time"  | tee $rundir/out.txt
+# `date` is part of the DWD AI Benchmark delivery requirements
+echo "Start date: $(date)"  | tee -a $rundir/out.txt
+set -o pipefail
 $nsys_cmd $launcher $run_cmd 2>&1 | tee -a $rundir/out.txt || train_exit_code=$?
+if [[ $train_exit_code -ne 0 ]]; then
+	echo "training failed $train_exit_code"  | tee -a $rundir/out.txt
+	exit $train_exit_code
+fi
 end_time=$(date +%s)
+echo "End date: $(date)"  | tee -a $rundir/out.txt
 echo "End time: $end_time"  | tee -a $rundir/out.txt
 
 #post processing
