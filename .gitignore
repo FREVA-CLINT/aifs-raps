@@ -2,3 +2,4 @@
 *ecsbatch*
 *.out
 build*
+venv/

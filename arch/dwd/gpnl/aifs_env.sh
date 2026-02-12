@@ -10,7 +10,7 @@ local_root_dir="$( cd $( dirname "${BASH_SOURCE[0]}" ) && cd ../../.. && pwd -P 
 
 #setup env
 export ENV_TYPE='venv'
-export INPUT_VENV_PATH="${local_root_dir:?Variable not set or empty}/venvs/aifs-raps"
+export INPUT_VENV_PATH="${local_root_dir:?Variable not set or empty}/venv"
 
 export ANEMOI_BASE_SEED=42
 export AIFS_DATA_PATH="/hpc/uwork/fe1ai/ecmwf_benchmark_data"
