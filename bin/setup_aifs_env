@@ -38,80 +38,7 @@ grids_path = "$RAPS_AIFS_BUILD_DIR/grids"
 EOF
 }
 
-#need to build the python module multiolib on aarch64 systems
-function build_multio() {
-	echo "Error. not yet implemented"
-	exit 1
-}
 
-function build_aarch64_deps_from_source(){
-#check if cmake is available
-#check if ecbundle is available
-
-	if [[ ! -d $RAPS_AIFS_BUILD_DIR/ecbundle ]]; then
-	ecbundle_version=2.2.2
-	git clone -b 2.2.2  https://github.com/ecmwf/ecbundle $RAPS_AIFS_BUILD_DIR/ecbundle
-	fi
-	export PATH=$RAPS_AIFS_BUILD_DIR/ecbundle/bin:$PATH
-	echo 'export PATH=$RAPS_AIFS_BUILD_DIR/ecbundle/bin:$PATH' >>  $RAPS_AIFS_ROOT_DIR/.aifsenv
-	#rm -rf $RAPS_AIFS_BUILD_DIR/aifs-bundle
-	mkdir -p $RAPS_AIFS_BUILD_DIR/aifs-bundle
-	rm -f $RAPS_AIFS_BUILD_DIR/aifs-bundle/bundle.yml
-	ln -s $RAPS_AIFS_ROOT_DIR/etc/aifs/bundle.yml $RAPS_AIFS_BUILD_DIR/aifs-bundle/bundle.yml
-	cd $RAPS_AIFS_BUILD_DIR/aifs-bundle
-	ecbundle create
-	ecbundle build
-	bash $RAPS_AIFS_BUILD_DIR/aifs-bundle/build/install.sh
-	cd -
-
-	#we need to get some grib templates so multio can decode the short names to the param ids
-	#these could be downloaded at runtime from internet
-	#but do it manually so it works offline too
-	mkdir -p ~/.cache/anemoi/
-	cd ~/.cache/anemoi/
-	cp $RAPS_AIFS_ROOT_DIR/etc/aifs/tarballs/grib.tar.gz .
-	tar xvzf grib.tar.gz
-	rm grib.tar.gz
-	cd -
-
-	cat <<EOT >> $RAPS_AIFS_ROOT_DIR/.aifsenv
-        #tell eccodes python bindings to use manually built eccodes
-        export ECCODES_PYTHON_USE_FINDLIBS=1
-        export ECCODES_DIR=$RAPS_AIFS_BUILD_DIR/aifs-bundle/install
-	#tell multio lib to use prebuilt multio lib
-	export FINDLIBS_DISABLE_PACKAGE=yes
-	export MULTIO_HOME=$RAPS_AIFS_BUILD_DIR/aifs-bundle/install
-	# env var which points to multio install dir, for historical reasons called IFS_INSTALL_DIR
-	export IFS_INSTALL_DIR=$RAPS_AIFS_BUILD_DIR/aifs-bundle/install 
-EOT
-}
-
-function build_eccodes() {
-	eccodes_version=2.41.0
-	eccodes_install_dir=$RAPS_AIFS_BUILD_DIR/eccodes/$eccodes_version
-	if [[ ! -f $eccodes_install_dir/lib64/libeccodes.so ]]; then
-	prevdir=$PWD
-	cd $SCRATCH/tmp
-	rm -rf eccodes-* #eccodes-${eccodes_version}-Source.tar.gz eccodes-${eccodes_version}-Source
-	wget https://confluence.ecmwf.int/download/attachments/45757960/eccodes-${eccodes_version}-Source.tar.gz
-	tar -xzf eccodes-${eccodes_version}-Source.tar.gz
-	cd eccodes-${eccodes_version}-Source
-	mkdir build
-	cd build
-	cmake .. -DCMAKE_INSTALL_PREFIX=$eccodes_install_dir
-	make -j
-	#ctest
-	make install
-	cat <<EOT >> $RAPS_AIFS_ROOT_DIR/.aifsenv
-	#tell eccodes python bindings to use manually built eccodes
-	export ECCODES_PYTHON_USE_FINDLIBS=1 
-	export ECCODES_DIR=$eccodes_install_dir
-EOT
-  cd $SCRATCH/tmp
-	rm -rf eccodes-${eccodes_version}-Source.tar.gz eccodes-${eccodes_version}-Source
-	cd $prevdir
-	fi
-}
 
 # TODO system specific info should tak optional bind list e.g. LUMI needs certain netowrking libs bound in
 # TODO if base container path isnt set, clone something from docker
@@ -326,10 +253,6 @@ if [ "$env_type" != "full_container" ]; then
 	$install_prefix $pip_cmd -e . 2>&1 > /dev/null
 	$install_prefix $pip_cmd -e .[profile] 2>&1 > /dev/null
 
-	#Installing inference
-	cd $RAPS_AIFS_BUILD_DIR/sources/anemoi-inference
-	$install_prefix $pip_cmd -e . 2>&1 > /dev/null
-
 	#check if flash_attn is available
 	#if not try install it
 	$install_prefix pip list | grep "flash-attn\|flash_attn" ||{
@@ -338,26 +261,6 @@ if [ "$env_type" != "full_container" ]; then
 	}
 
 
-	#install pymultio
-	if [[ $isa == 'aarch64' ]]; then
-		echo "Multio backend not suported on aarch64 systems"
-		build_aarch64_deps_from_source
-		$install_prefix $pip_cmd pymultio==2.7.0.dev4 --pre allow --no-deps #no deps so we dont try take multiolib and fail
-	else
-		$install_prefix $pip_cmd pymultio==2.7.0.dev4 --pre allow
-	fi
-
-	#install anemoi inference multio-plugin
-	#TODO replace with git clone
-	if [[ ! -d  $RAPS_AIFS_BUILD_DIR/sources/anemoi-plugins-ecmwf ]]; then
-	anemoi_inf_multio_plugin_src_tar=$RAPS_AIFS_ROOT_DIR/etc/aifs/tarballs/anemoi-plugins-ecmwf.tar.gz
-	cp $anemoi_inf_multio_plugin_src_tar $RAPS_AIFS_BUILD_DIR/sources
-	cd  $RAPS_AIFS_BUILD_DIR/sources
-	tar xvzf anemoi-plugins-ecmwf.tar.gz
-	rm anemoi-plugins-ecmwf.tar.gz
-	cd -
-	fi
-	$install_prefix $pip_cmd  --no-deps  $RAPS_AIFS_BUILD_DIR/sources/anemoi-plugins-ecmwf/plugins/inference/multio
 
 fi
 
