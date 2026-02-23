@@ -35,7 +35,7 @@ if [[ -n "$PRINTENV" ]]; then
     printenv | fgrep SLURM
 fi
 
-# Submit this job from it's directory.
+# Submit this job from its directory.
 cd $SLURM_SUBMIT_DIR
 pwd
 source ../../../.aifsenv
@@ -47,9 +47,9 @@ set -eux
 
 
 
-num_nodes=$SLURM_NNODES # free parameter
-local_batch_size=1 # free parameter
-num_gpus=$(( AIFS_NUM_GPUS_PER_NODE * num_nodes )) # free parameter, you can increase this to decrease walltime via strong scaling
+num_nodes=${SLURM_NNODES?not defined} # free parameter
+local_batch_size=2 # free parameter
+num_gpus=$(( $AIFS_NUM_GPUS_PER_NODE * num_nodes )) # free parameter, you can increase this to decrease walltime via strong scaling
 if [[ $local_batch_size == 1 ]]; then
     global_batch_size=16
     num_gpus_per_model=$(( num_gpus / global_batch_size ))
@@ -64,9 +64,11 @@ num_workers=6 # Free parameter
 launcher=srun # Free parameter
 
 
-# Model description (fixed)
-num_channels=1024  # fixed in benchmark specification
-ens_size=0 # fixed in the benchmark specification
+# +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+# Model description. Do not modify
+# +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+num_channels=1024
+ens_size=0
 res=o800
 train_end_yyyymmdd=20231230
 val_start_yyyymmdd=20231231
@@ -77,8 +79,8 @@ hydra_args=
 # model instance.
 # Limiting the number of batches per model to 450 provides consistent times
 # when testing with fewer parallel models, i.e. smaller batch sizes.
-batch_limit=450 # FIXED
-max_epochs=2 # FIXED
+batch_limit=450
+max_epochs=2
 
 dataset=aifs-benchmarking-o800-10years-cloned.zarr # must be extended first:
 # ./bin/aifs-clone-dataset \
@@ -86,8 +88,8 @@ dataset=aifs-benchmarking-o800-10years-cloned.zarr # must be extended first:
 #    /my-path-to/aifs-benchmarking-o800-10years-cloned.zarr 14240
 export CLONED_DATASET=1 # must be set when using an extended dataset
 
-mapper_chunks=16 # FIXED in the DWD Benchmark
-proc_chunks=8 # FIXED in the DWD Benchmark
+mapper_chunks=16 # Defined in the DWD Benchmark
+proc_chunks=8 # Defined in the DWD Benchmark
 # By default, training runs with the profiler
 # This has an associated overhead
 # You can disable it by passing the following flag
@@ -109,7 +111,7 @@ jobname=$SLURM_JOB_NAME
 #export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 
 # Please note the benchmark constraint on the effective_global_batch_size in the documentation.
-effective_global_batch_size=16 # fixed in benchmark specification
+effective_global_batch_size=16 # Defined in benchmark specification
 if [[ "$effective_global_batch_size" -ne "$(( num_gpus * local_batch_size / num_gpus_per_model ))" ]]; then
     echo "Parameter sanity check failed" >&2
     exit 1

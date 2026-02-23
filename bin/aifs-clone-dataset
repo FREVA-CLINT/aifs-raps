@@ -1,6 +1,6 @@
 #!/bin/bash
 # (C) Copyright 2025- ECMWF.
-# (C) Copyright 2026- DWD.
+# Modifications for DWD AI Benchmark based on the AIFS-RAPS, (C) Copyright 2026- DWD.
 #
 # This software is licensed under the terms of the Apache Licence Version 2.0
 # which can be obtained at http://www.apache.org/licenses/LICENSE-2.0.
@@ -20,6 +20,7 @@ if [[ -z "$TMPDIR" ]]; then
     TMPDIR="$(mktemp -d)"
     export TMPDIR
 fi
+mkdir -p "$TMPDIR"
 
 #copies a single date chunk
 #extracted to a function so it can be called in parallel across dates

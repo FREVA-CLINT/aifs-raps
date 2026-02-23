@@ -1,6 +1,6 @@
 #!/bin/bash --login
 # (C) Copyright 2025- ECMWF.
-# (C) Copyright 2026- DWD.
+# Modifications for DWD AI Benchmark based on the AIFS-RAPS, (C) Copyright 2026- DWD.
 #
 # This software is licensed under the terms of the Apache Licence Version 2.0
 # which can be obtained at http://www.apache.org/licenses/LICENSE-2.0.
@@ -33,7 +33,7 @@ if [[ -n "$PRINTENV" ]]; then
     printenv | fgrep SLURM
 fi
 
-# Submit this job from it's directory.
+# Submit this job from its directory.
 cd $SLURM_SUBMIT_DIR
 pwd
 source ../../../.aifsenv
@@ -43,8 +43,8 @@ if [[ -n "$PRINTENV" ]]; then
 fi
 set -eux
 
-num_nodes=$SLURM_NNODES # free parameter
-num_gpus=$((AIFS_NUM_GPUS_PER_NODE * num_nodes)) # free parameter
+num_nodes=${SLURM_NNODES?not defined} # free parameter
+num_gpus=$(( $AIFS_NUM_GPUS_PER_NODE * num_nodes )) # free parameter
 num_gpus_per_model=4 # free parameter, controls model sharding.
 # Please note the benchmark constraint on the effective_global_batch_size_per_ensmember in the documentation.
 
@@ -55,9 +55,11 @@ num_workers=6 # Free parameter
 
 launcher=srun # Free parameter
 
-# Model description (fixed)
-num_channels=2048 # fixed in the benchmark specification
-ens_size=4 # FIDEX
+# +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+# Model description. Do not modify
+# +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+num_channels=2048
+ens_size=4
 res=o2560
 train_end_yyyymmdd="20230929"
 val_start_yyyymmdd="20230930"
@@ -68,8 +70,8 @@ hydra_args="data=zarr_no_insolation"
 # model instance and ensemble member.
 # Limiting the number of batches per model to 90 provides consistent times when
 # testing with fewer parallel models, i.e. smaller batch sizes and ensemble.
-batch_limit=90 # FIXED
-max_epochs=2 # FIXED
+batch_limit=90
+max_epochs=2
 
 dataset=aifs-benchmark-4km-2years-synthetic.zarr # must be extended first:
 # ./bin/aifs-clone-dataset \
@@ -77,8 +79,8 @@ dataset=aifs-benchmark-4km-2years-synthetic.zarr # must be extended first:
 #    /my-path-to/aifs-benchmark-4km-2years-synthetic.zarr 2920
 export CLONED_DATASET=1 # must be set when using an extended dataset
 
-mapper_chunks=32 # FIXED in the DWD Benchmark
-proc_chunks=8 # FIXED in the DWD Benchmark
+mapper_chunks=32 # Defined in the DWD Benchmark
+proc_chunks=8 # Defined in the DWD Benchmark
 # By default, training runs with the profiler
 # This has an associated overhead
 # You can disable it by passing the following flag
@@ -86,7 +88,7 @@ profile="--no-profile"
 #profile="" #to run with the profiler
 hidden_res=o256
 model=transformer
-local_batch_size=1 # fixed
+local_batch_size=1 # Defined in the DWD Benchmark
 
 # To verify whether your model is data-loader bound, you can
 # disable data loading by setting the environment variable
@@ -100,8 +102,8 @@ jobname=$SLURM_JOB_NAME
 #export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 
 # Please note the benchmark constraint on the effective_global_batch_size_per_ensmember in the documentation.
-num_gpus_per_ensmember=$(( num_nodes * AIFS_NUM_GPUS_PER_NODE / ens_size ))
-effective_global_batch_size_per_ensmember=16 # fixed in benchmark specification
+num_gpus_per_ensmember=$(( num_nodes * $AIFS_NUM_GPUS_PER_NODE / ens_size ))
+effective_global_batch_size_per_ensmember=16 # Defined in benchmark specification
 if [[ "$effective_global_batch_size_per_ensmember" -ne "$(( num_gpus_per_ensmember * local_batch_size / num_gpus_per_model ))" ]]; then
     echo "Parameter sanity check failed" >&2
     exit 1
