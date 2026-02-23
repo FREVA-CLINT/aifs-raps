@@ -1,6 +1,6 @@
 #!/bin/bash --login
 # (C) Copyright 2025- ECMWF.
-# (C) Copyright 2026- DWD.
+# Modifications for DWD AI Benchmark based on the AIFS-RAPS, (C) Copyright 2026- DWD.
 #
 # This software is licensed under the terms of the Apache Licence Version 2.0
 # which can be obtained at http://www.apache.org/licenses/LICENSE-2.0.
@@ -36,7 +36,7 @@ if [[ -n "$PRINTENV" ]]; then
 fi
 
 
-# Submit this job from it's directory.
+# Submit this job from its directory.
 cd $SLURM_SUBMIT_DIR
 pwd
 source ../../../.aifsenv
@@ -46,18 +46,22 @@ if [[ -n "$PRINTENV" ]]; then
 fi
 set -eux
 
-num_nodes=$SLURM_NNODES
-num_gpus=4 #FIXED
-num_gpus_per_model=1 #FIXED
-effective_global_batch_size=16 #FIXED
-local_batch_size=$((effective_global_batch_size / num_gpus))
-launcher=""
+num_nodes=${SLURM_NNODES?not defined} # free parameter
+launcher="srun" # free parameter
 
-# Model description (fixed)
+
+num_gpus=4 # Defined in the DWD Benchmark
+num_gpus_per_model=1 # Defined in the DWD Benchmark
+effective_global_batch_size=16 # Defined in the DWD Benchmark
+local_batch_size=4 # == effective_global_batch_size / num_gpus_per_model
+
+# +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+# Model description. Do not modify
+# +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 num_channels=256
 ens_size=0
 res=o48
-export ANEMOI_BASE_SEED=42 # FIXED
+export ANEMOI_BASE_SEED=42 # Defined in the DWD Benchmark
 train_end_yyyymmdd=2020
 val_start_yyyymmdd=2021
 val_end_yyyymmdd=2021
