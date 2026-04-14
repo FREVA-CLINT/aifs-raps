@@ -1,12 +1,22 @@
-# DWD's fork of the AIFS-RAPS
+# DKRZ's fork of the AIFS-RAPS
 This code measures the system performance of Anemoi trainings indicative for training AICON.
 
 1. `cd aifs-raps`
-2. Create a configuration for your system: `arch/foo/bar/aifs_env.sh`
-3. `./aifs-build --build-dir build --arch arch/foo/bar`
-4. Expand training data using `./bin/aifs-clone-dataset /my-path-to/aifs-benchmarking-ea-an-oper-0001-mars-o800-2023-2023-6h-v1.zarr/ /my-path-to/aifs-benchmarking-o800-10years-cloned.zarr 14240`
-5. `cd launchers/SLURM/DWD2026`
-6. `sbatch throughput.DWD2026.slurm`
+2. `module load git`
+2. `./aifs-build --build-dir build --arch arch/dkrz/levante`
+3. `cd launchers/SLURM/DKRZ2026`
+4. `sbatch throughput.DKRZ2026.slurm`
+
+## Levante Benchmarks
+
+The measured Levante throughput benchmark below was run on 2 A100 nodes with 4 GPUs per node (8 GPUs total). For the `o800` throughput benchmark, fake dataloading was enabled (`AIFS_FAKE_DATALOADING=1`).
+
+| Benchmark | System | `training_avg_throughput` | `training_avg_throughput_per_sample` | Total runtime | Per-node throughput |
+| --- | --- | ---: | ---: | ---: | ---: |
+| `o800` training throughput | 2x Levante `a100_80` nodes, 4 GPUs/node | 0.03333 it/s | 0.01666 it/s/sample | 07:35:29 | 0.20 GB/s |
+
+Per-node throughput is computed as `1.5 GB * 0.03333 it/s * 4 GPUs per node = 0.19998 GB/s`. Across both nodes, this corresponds to `0.39996 GB/s` aggregate throughput.
+
 
 -------------------------------------------------------------------------------
 

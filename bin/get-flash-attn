@@ -92,6 +92,10 @@ else
 	PYTHON_CMD="python" 
 fi
 
+version_gt() {
+	[ "$(printf "%s\n%s\n" "$2" "$1" | sort -V | tail -n 1)" = "$1" ] && [ "$1" != "$2" ]
+}
+
 printf "importing torch to parse config. could take a min...\n"
 torch_config=`$PYTHON_CMD -c "import torch; print(torch.__config__.show())"` ||{
         printf "Error. could not import torch config. maybe torch can't be found? Have you activated your python evironment?\nexiting..."
@@ -155,7 +159,7 @@ fi
 # and any torch builds newer then 2.6.0
 if  [[ $wheel_source == "all" ]]; then
 wheel_source="tridao"
-if  [[ $isa == "aarch64" ]] || [ `echo $torch_version'>'2.6 | bc -l` -eq 1 ] ; then
+if  [[ $isa == "aarch64" ]] || version_gt "$torch_version" "2.6" ; then
 wheel_source="naco"
 fi
 printf " +        source '$wheel_source'\n"
@@ -271,7 +275,7 @@ else
 	exit 0 
 fi
 
-if [[ $wheel_source == "tridao" ]] && [ `echo $torch_version'>'2.6 | bc -l` -eq 1 ] ; then
+if [[ $wheel_source == "tridao" ]] && version_gt "$torch_version" "2.6" ; then
 	printf "\nWarning. torch version '$torch_version' is 2.7 or higher. Due to changes in how the wheels are built, you might need to update your GCC for flash-attn before running\n"
 	printf "On Atos: 		'export LD_LIBRARY_PATH=/usr/local/apps/gcc/12.2.0/lib64/:\$LD_LIBRARY_PATH'\n"
 	printf "On Leonardo: 	'module load gcc/12.2.0'\n"

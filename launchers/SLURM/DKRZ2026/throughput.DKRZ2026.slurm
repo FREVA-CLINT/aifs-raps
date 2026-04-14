@@ -9,22 +9,30 @@
 # granted to it by virtue of its status as an intergovernmental organisation
 # nor does it submit to any jurisdiction.
 
-#SBATCH --job-name=high-res.generate-graph
-#SBATCH --nodes=1
+#SBATCH --job-name=throughput
+#SBATCH -A bd1560
+#SBATCH -p gpu
+#SBATCH --nodes=2
 #SBATCH --ntasks-per-node=4
 #SBATCH --cpus-per-task=16
 #SBATCH --gres=gpu:4
 #SBATCH --mem=0
 #SBATCH --hint=nomultithread
-#SBATCH --time=1:00:00
-#SBATCH -o %x-%j.out
+#SBATCH --time=12:00:00
+#SBATCH --constraint a100_80
+#SBATCH --exclusive
+#SBATCH -o logs/%x-%j.out
 
-# This script runs a single training step to generate the graph required for the
-# High-resolution Training Benchmark.
+# This script runs a training as specified in the Throughput Training Benchmark.
 
-# +-+-+-+-+-+-+-+-+-+-+- +-+-+-+-+
-# |P|R|E|P|A|R|A|T|O|R|Y |O|n|l|y|
-# +-+-+-+-+-+-+-+-+-+-+- +-+-+-+-+
+# The Throughput Training Benchmark evaluates the system's performance by
+# running multiple 15 km-resolution model trainings simultaneously.
+# Each submission of this script is a single training with `anemoi-training`.
+
+# You may tune the number of nodes `num_nods`, the number of accelerator devices per
+# node `AIFS_NUM_GPUS_PER_NODE`, the number of accelerator devices per model
+# `num_gpus_per_model`, the number of CPU worker processes `num_workers`, and
+# the local batch size `local_batch_size`.
 
 PRINTENV=
 if [[ -n "$PRINTENV" ]]; then
@@ -35,16 +43,25 @@ fi
 cd $SLURM_SUBMIT_DIR
 pwd
 source ../../../.aifsenv
+export AIFS_DATA_PATH=/work/bd1560/k204233/benchmarking/data/
+export AIFS_FAKE_DATALOADING=1
 
 if [[ -n "$PRINTENV" ]]; then
     printenv
 fi
 set -eux
 
-num_nodes=${SLURM_NNODES?not defined} # free parameter
-num_gpus=$(( $AIFS_NUM_GPUS_PER_NODE * num_nodes )) # free parameter
-num_gpus_per_model=$num_gpus # Control model sharding.
 
+
+num_nodes=${SLURM_NNODES?not defined} # free parameter
+local_batch_size=2 # free parameter
+num_gpus=$(( $AIFS_NUM_GPUS_PER_NODE * num_nodes )) # free parameter, you can increase this to decrease walltime via strong scaling
+if [[ $local_batch_size == 1 ]]; then
+    global_batch_size=16
+    num_gpus_per_model=$(( num_gpus / global_batch_size ))
+else
+    num_gpus_per_model=1
+fi
 
 # Define the number of worker processes spawned for each accelerator device.
 # More workers increases CPU memory usage but can prevent GPU stalling between iterations
@@ -52,49 +69,62 @@ num_workers=6 # Free parameter
 
 launcher=srun # Free parameter
 
+
 # +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 # Model description. Do not modify
 # +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-num_channels=2048
-ens_size=0 # Reduced value for graph preparation only. The final benchmark run must be run according to the specification.
-res=o2560
-train_end_yyyymmdd="20230929"
-val_start_yyyymmdd="20230930"
-val_end_yyyymmdd="20230930"
-hydra_args="data=zarr_no_insolation"
-# The 2-year dataset contains 2920 samples (2*365*4).
-# Divided by batch size 16 and 2 epochs, that is 90 batches per
-# model instance and ensemble member.
-# Limiting the number of batches per model to 90 provides consistent times when
-# testing with fewer parallel models, i.e. smaller batch sizes and ensemble.
-batch_limit=1 # Reduced value for graph preparation only
-max_epochs=1 # Reduced value for graph preparation only
+num_channels=1024
+ens_size=0
+res=o800
+train_end_yyyymmdd=20231230
+val_start_yyyymmdd=20231231
+val_end_yyyymmdd=20231231
+hydra_args=
+# The 10-year dataset contains 14,600 samples (10*365*4).
+# Divided by batch size 16 and 2 epochs, that is 450 batches per
+# model instance.
+# Limiting the number of batches per model to 450 provides consistent times
+# when testing with fewer parallel models, i.e. smaller batch sizes.
+batch_limit=450
+max_epochs=2
 
-dataset=aifs-benchmark-4km-2years-synthetic.zarr # must be extended first:
+dataset=aifs-benchmarking-o800-10years-cloned.zarr # must be extended first:
 # ./bin/aifs-clone-dataset \
-#    /my-path-to/aifs-rd-an-lwda-ifc3-mars-o2560-2023-2023-6h-v3-1week.zarr \
-#    /my-path-to/aifs-benchmark-4km-2years-synthetic.zarr 2920
+#    /my-path-to/aifs-benchmarking-ea-an-oper-0001-mars-o800-2023-2023-6h-v1.zarr/ \
+#    /my-path-to/aifs-benchmarking-o800-10years-cloned.zarr 14240
 export CLONED_DATASET=1 # must be set when using an extended dataset
 
-mapper_chunks=32 # Defined in the DWD Benchmark
+mapper_chunks=16 # Defined in the DWD Benchmark
 proc_chunks=8 # Defined in the DWD Benchmark
 # By default, training runs with the profiler
 # This has an associated overhead
 # You can disable it by passing the following flag
 profile="--no-profile"
-#profile="" #to run with the profiler
-hidden_res=o256
-model=transformer
-local_batch_size=1
+profile="" #to run with the profiler
+hidden_res=7
+model=graphtransformer
+
 
 # To verify whether your model is data-loader bound, you can
 # disable data loading by setting the environment variable
-export AIFS_FAKE_DATALOADING=1
+# export AIFS_FAKE_DATALOADING=1
 # **However, this mode should be used for diagnostic purposes only.**
-echo "Faking data loading: this mode should be used for diagnostic purposes only."
 
 jobid=$$
 jobname=$SLURM_JOB_NAME
+
+# may be used for optimization on CUDA-based systems
+#export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+
+# Please note the benchmark constraint on the effective_global_batch_size in the documentation.
+effective_global_batch_size=16 # Defined in benchmark specification
+if [[ "$effective_global_batch_size" -ne "$(( num_gpus * local_batch_size / num_gpus_per_model ))" ]]; then
+    echo "Parameter sanity check failed" >&2
+    exit 1
+fi
+
+python -c "import torch; print(torch.cuda.is_available())"
+
 
 $RAPS_AIFS_ROOT_DIR/bin/train \
     --train-end=$train_end_yyyymmdd \

@@ -18,6 +18,10 @@ env_type=$ENV_TYPE #set in arch_dir/env.sh
 #env_type=hybrid_container #some libs installed in a container, other libs (ncluding anemoi srcs installed outside
 #env_type=full_container #Everything lives inside a container you built yourself
 
+version_ge() {
+	[ "$(printf "%s\n%s\n" "$1" "$2" | sort -V | tail -n 1)" = "$1" ]
+}
+
 function set_grid_path() {
 
 #move grids to build dir
@@ -149,8 +153,7 @@ $python_cmd -m venv -h 2>&1 > /dev/null ||{
 
 
 python_version=$($python_cmd --version | awk '{print $2}' | sed 's/\.[0-9]\+$//')
-is_python_supported=$(echo $python_version'>='3.10 | bc -l)
-if [ $is_python_supported -eq 0 ]; then
+if ! version_ge "$python_version" "3.10"; then
 	echo "Error. Your python version was detected as $python_version"
 	echo "Versions < 3.10 weren't able to install anemoi-* using pyproject.toml"
 	echo "Please upgrade python to at least 3.10. exiting..."
@@ -227,12 +230,18 @@ set_grid_path
 if [ "$env_type" != "full_container" ]; then
 	isa=`lscpu | grep "^Architecture:" | awk '{print $2}'`
 	if [[ $isa == 'aarch64' ]]; then
-		$install_prefix $pip_cmd "torch>=2.6.0" torchvision triton --index-url https://download.pytorch.org/whl/cu128
+		# Keep the default pip index for ordinary dependencies like typing-extensions,
+		# while still allowing torch wheels to come from the PyTorch wheel index.
+		$install_prefix $pip_cmd "torch==2.10.*" torchvision triton --extra-index-url https://download.pytorch.org/whl/cu128
 		#pytorch trace profiling doesnt work on aarch64 with 'with_stack=True'
 		sed -i 's/with_stack=True/with_stack=False/g' $RAPS_AIFS_BUILD_DIR/sources/anemoi-core/training/src/anemoi/training/diagnostics/profilers.py
 	#check for amd gpu, if so install rocm-enabled torch
 	elif command -v rocm-smi 2>&1 >/dev/null; then
-		$install_prefix $pip_cmd "torch>=2.6.0" torchvision --index-url https://download.pytorch.org/whl/rocm6.3
+		$install_prefix $pip_cmd "torch==2.10.*" torchvision --extra-index-url https://download.pytorch.org/whl/rocm6.3
+	else
+		# Install the plain PyPI torch release on the default x86_64 path so we
+		# get version 2.10.0 rather than a CUDA-tagged local build like +cu128.
+		$install_prefix $pip_cmd "torch===2.10.0" torchvision triton
 	fi
 
 	#install pinned version of anemoi-utils
@@ -258,10 +267,14 @@ if [ "$env_type" != "full_container" ]; then
 	#if not try install it
 	$install_prefix pip list | grep "flash-attn\|flash_attn" ||{
 		echo "Flash-attn not found! will try install a prebuilt wheel from github"
-		OFFLINE=$OFFLINE $install_prefix $RAPS_AIFS_ROOT_DIR/bin/get-flash-attn -v 2.7.4.post1
+		flash_attn_version=${INPUT_FLASH_ATTN_VERSION:-2.7.4.post1}
+		flash_attn_args=(-v "$flash_attn_version")
+		if [[ -n "${INPUT_FLASH_ATTN_WHEEL_SOURCE:-}" ]]; then
+			flash_attn_args+=(-s "$INPUT_FLASH_ATTN_WHEEL_SOURCE")
+		fi
+		OFFLINE=$OFFLINE $install_prefix $RAPS_AIFS_ROOT_DIR/bin/get-flash-attn "${flash_attn_args[@]}"
 	}
 
 
 
 fi
-
