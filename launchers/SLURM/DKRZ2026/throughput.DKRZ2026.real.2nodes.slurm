@@ -9,17 +9,17 @@
 # granted to it by virtue of its status as an intergovernmental organisation
 # nor does it submit to any jurisdiction.
 
-#SBATCH --job-name=throughput
-#SBATCH -A bd1560
-#SBATCH -p gpu
+#SBATCH --job-name=throughput-hlre5-real-2nodes
 #SBATCH --nodes=2
 #SBATCH --ntasks-per-node=4
 #SBATCH --cpus-per-task=16
+#SBATCH -A k20200
+#SBATCH -p dolpung
 #SBATCH --gres=gpu:4
+#SBATCH --gpus-per-node=4
 #SBATCH --mem=0
 #SBATCH --hint=nomultithread
 #SBATCH --time=12:00:00
-#SBATCH --constraint a100_80
 #SBATCH --exclusive
 #SBATCH -o logs/%x-%j.out
 
@@ -43,15 +43,11 @@ fi
 cd $SLURM_SUBMIT_DIR
 pwd
 source ../../../.aifsenv
-export AIFS_DATA_PATH=/work/bd1560/k204233/benchmarking/data/
-export AIFS_FAKE_DATALOADING=1
 
 if [[ -n "$PRINTENV" ]]; then
     printenv
 fi
 set -eux
-
-
 
 num_nodes=${SLURM_NNODES?not defined} # free parameter
 local_batch_size=2 # free parameter
@@ -104,11 +100,11 @@ profile="" #to run with the profiler
 hidden_res=7
 model=graphtransformer
 
+# If this launcher is switched to transformer, avoid flash-attn dependency.
+if [[ "$model" == "transformer" ]]; then
+    hydra_args+=" model.processor.attention_implementation=scaled_dot_product_attention"
+fi
 
-# To verify whether your model is data-loader bound, you can
-# disable data loading by setting the environment variable
-# export AIFS_FAKE_DATALOADING=1
-# **However, this mode should be used for diagnostic purposes only.**
 
 jobid=$$
 jobname=$SLURM_JOB_NAME

@@ -1,0 +1,308 @@
+#!/bin/bash
+# (C) Copyright 2026- ECMWF.
+#
+# This software is licensed under the terms of the Apache Licence Version 2.0
+# which can be obtained at http://www.apache.org/licenses/LICENSE-2.0.
+#
+# In applying this licence, ECMWF does not waive the privileges and immunities
+# granted to it by virtue of its status as an intergovernmental organisation
+# nor does it submit to any jurisdiction.
+#
+# benchmark-summary: Extract benchmark summary rows from one or more output paths.
+# Input paths can be:
+#   - A run directory containing out.txt/env.txt/run_cmd.txt
+#   - A path to out.txt inside such a run directory
+#   - A SLURM launcher .out log containing a "rundir = ..." line
+#
+# The script prints a Markdown table suitable for README-benchmarks.md.
+
+set -u
+shopt -s extglob
+
+usage() {
+    cat <<'EOF'
+usage: benchmark-summary <list of output paths>
+
+Examples:
+  benchmark-summary aifs/outputs/raps/train/*throughput*/ 
+  benchmark-summary launchers/SLURM/DKRZ2026/logs/throughput-*.out
+
+Optional environment overrides:
+  AIFS_BENCH_DATA_GB_PER_GPU_ITER        Override all benchmarks (single float)
+  AIFS_BENCH_DATA_GB_PER_GPU_ITER_O800   Override o800 benchmark constant
+  AIFS_BENCH_DATA_GB_PER_GPU_ITER_O48    Override o48 benchmark constant
+EOF
+}
+
+trim() {
+    local s="$1"
+    s="${s#"${s%%[![:space:]]*}"}"
+    s="${s%"${s##*[![:space:]]}"}"
+    printf "%s" "$s"
+}
+
+is_float() {
+    local x="${1:-}"
+    [[ "$x" =~ ^-?[0-9]+([.][0-9]+)?([eE][-+]?[0-9]+)?$ ]]
+}
+
+format_seconds_hhmmss() {
+    local total_s="$1"
+    local h=$(( total_s / 3600 ))
+    local m=$(( (total_s % 3600) / 60 ))
+    local s=$(( total_s % 60 ))
+    printf "%02d:%02d:%02d" "$h" "$m" "$s"
+}
+
+get_env_value() {
+    local env_file="$1"
+    local key="$2"
+    awk -F= -v k="$key" '$1 == k {print substr($0, index($0, "=") + 1); exit}' "$env_file"
+}
+
+get_run_cmd_value() {
+    local run_cmd_file="$1"
+    local key="$2"
+    awk -v k="$key" '{
+        for (i = 1; i <= NF; ++i) {
+            if (index($i, k "=") == 1) {
+                sub("^" k "=", "", $i)
+                print $i
+                exit
+            }
+        }
+    }' "$run_cmd_file"
+}
+
+get_speed_metric() {
+    local out_file="$1"
+    local metric_name="$2"
+    awk -F'|' -v metric="$metric_name" '
+        NF >= 4 {
+            m = $3
+            v = $4
+            gsub(/^[[:space:]]+|[[:space:]]+$/, "", m)
+            gsub(/^[[:space:]]+|[[:space:]]+$/, "", v)
+            if (m == metric) {
+                print v
+                exit
+            }
+        }
+    ' "$out_file"
+}
+
+extract_rundir_from_path() {
+    local input_path="$1"
+    local p="$input_path"
+
+    if [[ -d "$p" && -f "$p/out.txt" && -f "$p/env.txt" && -f "$p/run_cmd.txt" ]]; then
+        printf "%s" "$p"
+        return 0
+    fi
+
+    if [[ -f "$p" ]]; then
+        local base
+        local dir
+        base=$(basename "$p")
+        dir=$(dirname "$p")
+
+        if [[ "$base" == "out.txt" && -f "$dir/env.txt" && -f "$dir/run_cmd.txt" ]]; then
+            printf "%s" "$dir"
+            return 0
+        fi
+
+        # Launcher logs from SLURM typically contain "rundir = /...".
+        local from_log
+        from_log=$(sed -n "s/.*rundir = \\(\\/[^'\"[:space:]]*\\).*/\\1/p" "$p" | head -n 1)
+        from_log=$(trim "$from_log")
+        if [[ -n "$from_log" && -d "$from_log" && -f "$from_log/out.txt" && -f "$from_log/env.txt" && -f "$from_log/run_cmd.txt" ]]; then
+            printf "%s" "$from_log"
+            return 0
+        fi
+    fi
+
+    return 1
+}
+
+infer_data_gb_per_gpu_iter() {
+    local source_res="$1"
+
+    if [[ -n "${AIFS_BENCH_DATA_GB_PER_GPU_ITER:-}" ]]; then
+        printf "%s" "${AIFS_BENCH_DATA_GB_PER_GPU_ITER}"
+        return 0
+    fi
+
+    case "$source_res" in
+        o800)
+            printf "%s" "${AIFS_BENCH_DATA_GB_PER_GPU_ITER_O800:-1.5}"
+            ;;
+        o48)
+            printf "%s" "${AIFS_BENCH_DATA_GB_PER_GPU_ITER_O48:-0.05}"
+            ;;
+        *)
+            printf ""
+            ;;
+    esac
+}
+
+if [[ $# -lt 1 ]]; then
+    usage
+    exit 0
+fi
+
+echo "| Benchmark | System | \`training_avg_throughput\` | \`training_avg_throughput_per_sample\` | Total runtime | Per-node throughput | Aggregate throughput |"
+echo "| --- | --- | ---: | ---: | ---: | ---: | ---: |"
+
+had_any_valid=0
+
+for input_path in "$@"; do
+    rundir=""
+    if ! rundir=$(extract_rundir_from_path "$input_path"); then
+        echo "Warning: could not resolve run directory from '$input_path' (skipping)" >&2
+        continue
+    fi
+
+    out_file="$rundir/out.txt"
+    env_file="$rundir/env.txt"
+    run_cmd_file="$rundir/run_cmd.txt"
+
+    if [[ ! -f "$out_file" || ! -f "$env_file" || ! -f "$run_cmd_file" ]]; then
+        echo "Warning: missing required files in '$rundir' (need out.txt/env.txt/run_cmd.txt), skipping" >&2
+        continue
+    fi
+
+    had_any_valid=1
+
+    source_res=$(get_run_cmd_value "$run_cmd_file" "data.resolution")
+    source_res=$(trim "$source_res")
+    if [[ -z "$source_res" ]]; then
+        source_res="unknown"
+    fi
+
+    job_name=$(get_env_value "$env_file" "jobname")
+    job_name=$(trim "$job_name")
+    if [[ -z "$job_name" ]]; then
+        # run basename format: "...<params>.<jobname>-<jobid>"
+        job_name=$(basename "$rundir")
+        job_name="${job_name##*.}"
+        job_name="${job_name%-*}"
+    fi
+
+    benchmark_name="$source_res training"
+    if [[ "$job_name" == *throughput* ]]; then
+        benchmark_name="$source_res training throughput"
+    elif [[ "$job_name" == *correctness* ]]; then
+        benchmark_name="$source_res training correctness"
+    fi
+
+    node_count=$(get_env_value "$env_file" "AIFS_NUM_NODES")
+    node_count=$(trim "$node_count")
+    if [[ -z "$node_count" ]]; then
+        node_count=$(get_env_value "$env_file" "SLURM_NNODES")
+        node_count=$(trim "$node_count")
+    fi
+    if [[ -z "$node_count" ]]; then
+        node_count="1"
+    fi
+
+    gpus_per_node=$(get_env_value "$env_file" "AIFS_NUM_GPUS_PER_NODE")
+    gpus_per_node=$(trim "$gpus_per_node")
+    if [[ -z "$gpus_per_node" ]]; then
+        gpus_per_node=$(get_env_value "$env_file" "SLURM_GPUS_PER_NODE")
+        gpus_per_node=$(trim "$gpus_per_node")
+    fi
+    gpus_per_node="${gpus_per_node%%(*}" # SLURM can report "4(x2)"
+
+    if [[ -z "$gpus_per_node" ]]; then
+        total_gpus=$(get_env_value "$env_file" "AIFS_NUM_GPUS")
+        total_gpus=$(trim "$total_gpus")
+        if is_float "$total_gpus" && is_float "$node_count" && [[ "$node_count" != "0" ]]; then
+            gpus_per_node=$(awk -v g="$total_gpus" -v n="$node_count" 'BEGIN { printf "%.0f", g / n }')
+        fi
+    fi
+    if [[ -z "$gpus_per_node" ]]; then
+        gpus_per_node="?"
+    fi
+
+    cluster_name=$(get_env_value "$env_file" "SLURM_CLUSTER_NAME")
+    cluster_name=$(trim "$cluster_name")
+    node_name=$(get_env_value "$env_file" "SLURM_JOB_PARTITION")
+    node_name=$(trim "$node_name")
+    if [[ -z "$node_name" ]]; then
+        # Fallback: parse "throughput-<node_name>-..." from job name when available.
+        if [[ "$job_name" == throughput-*-* ]]; then
+            node_name="${job_name#throughput-}"
+            node_name="${node_name%%-*}"
+        fi
+    fi
+
+    if [[ -n "$cluster_name" && -n "$node_name" ]]; then
+        system_desc="${node_count}x ${cluster_name} \`${node_name}\` nodes, ${gpus_per_node} GPUs/node"
+    elif [[ -n "$cluster_name" ]]; then
+        system_desc="${node_count}x ${cluster_name} nodes, ${gpus_per_node} GPUs/node"
+    elif [[ -n "$node_name" ]]; then
+        system_desc="${node_count}x \`${node_name}\` nodes, ${gpus_per_node} GPUs/node"
+    else
+        system_desc="${node_count}x nodes, ${gpus_per_node} GPUs/node"
+    fi
+
+    training_avg_throughput=$(get_speed_metric "$out_file" "training_avg_throughput")
+    training_avg_throughput=$(trim "$training_avg_throughput")
+
+    training_avg_throughput_per_sample=$(get_speed_metric "$out_file" "training_avg_throughput_per_sample")
+    training_avg_throughput_per_sample=$(trim "$training_avg_throughput_per_sample")
+
+    if ! is_float "$training_avg_throughput"; then
+        training_avg_throughput="N/A"
+    fi
+    if ! is_float "$training_avg_throughput_per_sample"; then
+        training_avg_throughput_per_sample="N/A"
+    fi
+
+    start_time=$(awk '/^Start time:/ {print $3; exit}' "$out_file")
+    end_time=$(awk '/^End time:/ {print $3; exit}' "$out_file")
+    start_time=$(trim "$start_time")
+    end_time=$(trim "$end_time")
+
+    total_runtime="N/A"
+    if [[ "$start_time" =~ ^[0-9]+$ && "$end_time" =~ ^[0-9]+$ && "$end_time" -ge "$start_time" ]]; then
+        runtime_s=$(( end_time - start_time ))
+        total_runtime=$(format_seconds_hhmmss "$runtime_s")
+    fi
+
+    per_node_throughput="N/A"
+    aggregate_throughput="N/A"
+    data_gb_per_gpu_iter=$(infer_data_gb_per_gpu_iter "$source_res")
+    if is_float "$data_gb_per_gpu_iter" && is_float "$gpus_per_node" && is_float "$training_avg_throughput"; then
+        per_node_raw=$(awk -v d="$data_gb_per_gpu_iter" -v t="$training_avg_throughput" -v g="$gpus_per_node" 'BEGIN { printf "%.10f", d * t * g }')
+        if is_float "$per_node_raw"; then
+            per_node_throughput=$(awk -v x="$per_node_raw" 'BEGIN { printf "%.2f GB/s", x }')
+            if is_float "$node_count"; then
+                aggregate_raw=$(awk -v x="$per_node_raw" -v n="$node_count" 'BEGIN { printf "%.10f", x * n }')
+                if is_float "$aggregate_raw"; then
+                    aggregate_throughput=$(awk -v x="$aggregate_raw" 'BEGIN { printf "%.2f GB/s", x }')
+                fi
+            fi
+        fi
+    fi
+
+    if is_float "$training_avg_throughput"; then
+        training_avg_throughput_fmt=$(awk -v x="$training_avg_throughput" 'BEGIN { printf "%.5f it/s", x }')
+    else
+        training_avg_throughput_fmt="N/A"
+    fi
+
+    if is_float "$training_avg_throughput_per_sample"; then
+        training_avg_throughput_per_sample_fmt=$(awk -v x="$training_avg_throughput_per_sample" 'BEGIN { printf "%.5f it/s/sample", x }')
+    else
+        training_avg_throughput_per_sample_fmt="N/A"
+    fi
+
+    echo "| \`${benchmark_name}\` | ${system_desc} | ${training_avg_throughput_fmt} | ${training_avg_throughput_per_sample_fmt} | ${total_runtime} | ${per_node_throughput} | ${aggregate_throughput} |"
+done
+
+if [[ "$had_any_valid" -eq 0 ]]; then
+    exit 1
+fi
+
+exit 0

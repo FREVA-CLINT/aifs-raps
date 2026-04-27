@@ -86,10 +86,10 @@ if [[ $verbose_flag -eq 1 ]]; then
 	quiet="" #unsilence pip and wget when running in verbose mode
 fi
 
-if command -v python3 &> /dev/null; then 
-	PYTHON_CMD="python3" 
-else 
-	PYTHON_CMD="python" 
+if command -v python3 &> /dev/null; then
+	PYTHON_CMD="python3"
+else
+	PYTHON_CMD="python"
 fi
 
 version_gt() {
@@ -97,52 +97,121 @@ version_gt() {
 }
 
 printf "importing torch to parse config. could take a min...\n"
-torch_config=`$PYTHON_CMD -c "import torch; print(torch.__config__.show())"` ||{
-        printf "Error. could not import torch config. maybe torch can't be found? Have you activated your python evironment?\nexiting..."
-        exit 1
+torch_info="$($PYTHON_CMD - <<'PY'
+import platform
+import re
+import sys
+
+import torch
+
+cfg = torch.__config__.show()
+
+def detect_cuda_major() -> str:
+    cuda_raw = getattr(torch.version, "cuda", None)
+    if cuda_raw:
+        return str(cuda_raw).split(".")[0]
+
+    patterns = [
+        r"CUDA_VERSION\s*=\s*([0-9]+)",
+        r"CUDA used to build PyTorch:\s*([0-9]+)",
+    ]
+    for pat in patterns:
+        m = re.search(pat, cfg, flags=re.IGNORECASE)
+        if m:
+            return m.group(1)
+
+    # Fallback for builds tagged like '2.10.0+cu128'
+    m = re.search(r"\+cu([0-9]{2,3})\b", str(torch.__version__))
+    if m:
+        token = m.group(1)
+        if len(token) == 3:
+            return token[:2]
+        return token
+
+    return ""
+
+def detect_cuda_built() -> int:
+    try:
+        return 1 if torch.backends.cuda.is_built() else 0
+    except Exception:
+        return 0
+
+hip_raw = getattr(torch.version, "hip", None) or ""
+cuda_major = detect_cuda_major()
+cuda_built = detect_cuda_built()
+
+torch_raw = str(torch.__version__).split("+")[0]
+m = re.match(r"^([0-9]+)\.([0-9]+)", torch_raw)
+if not m:
+    raise RuntimeError(f"could not parse torch version from '{torch_raw}'")
+torch_short = f"{m.group(1)}.{m.group(2)}"
+
+abi_attr = getattr(getattr(torch, "_C", object()), "_GLIBCXX_USE_CXX11_ABI", None)
+if abi_attr is None:
+    m = re.search(r"ABI=([01])", cfg)
+    if not m:
+        raise RuntimeError("could not determine CXX11 ABI from torch")
+    abi = "TRUE" if m.group(1) == "1" else "FALSE"
+else:
+    abi = "TRUE" if bool(abi_attr) else "FALSE"
+
+python_tag = f"cp{sys.version_info.major}{sys.version_info.minor}"
+os_name = "linux" if sys.platform.startswith("linux") else sys.platform
+isa = platform.machine()
+
+print(f"cuda_version={cuda_major}")
+print(f"cuda_built={cuda_built}")
+print(f"hip_version={hip_raw}")
+print(f"torch_version={torch_short}")
+print(f"ABI={abi}")
+print(f"python_tag={python_tag}")
+print(f"os={os_name}")
+print(f"isa={isa}")
+PY
+)" || {
+	printf "Error. could not import torch or parse torch config. Have you activated your python environment?\nexiting..."
+	exit 1
 }
 
-# cut off everything up to and inc "CUDA_VERSION="      -> 12.4,CUDNN_VERSION=...
-# takes up to the first '.'                             -> 12
-cuda_version=`echo ${torch_config#*CUDA_VERSION=} | awk -F'.' '{print $1}'`
+while IFS='=' read -r key value; do
+	case "$key" in
+		cuda_version) cuda_version="$value" ;;
+		cuda_built) cuda_built="$value" ;;
+		hip_version) hip_version="$value" ;;
+		torch_version) torch_version="$value" ;;
+		ABI) ABI="$value" ;;
+		python_tag) python_tag="$value" ;;
+		os) os="$value" ;;
+		isa) isa="$value" ;;
+	esac
+done <<< "$torch_info"
+
+if [[ -n "${FLASH_ATTN_CUDA_MAJOR:-}" ]]; then
+	cuda_version="$FLASH_ATTN_CUDA_MAJOR"
+	printf "Warning. overriding detected CUDA major with FLASH_ATTN_CUDA_MAJOR=%s\n" "$cuda_version"
+fi
+
+if [[ -z "${cuda_version:-}" ]]; then
+	if [[ -n "${hip_version:-}" ]]; then
+		printf "Error. torch appears to be a ROCm build (HIP=%s), not CUDA.\n" "$hip_version"
+		printf "flash-attn CUDA wheels are incompatible with ROCm torch.\nexiting...\n"
+	elif [[ "${cuda_built:-0}" -eq 0 ]]; then
+		printf "Error. torch appears to be CPU-only (CUDA not built in).\n"
+		printf "Install a CUDA-enabled torch build first, then rerun this script.\nexiting...\n"
+	else
+		printf "Error. Could not detect CUDA version from torch despite CUDA support.\n"
+		printf "Try setting FLASH_ATTN_CUDA_MAJOR=<major> (for example 12) and rerun.\nexiting...\n"
+	fi
+	exit 1
+fi
+
 printf " +        cu$cuda_version\n"
-
-# cut off everything up to and inc "TORCH_VERSION="             -> 2.5.1, USE_CUDA=ON, USE_CUDNN=ON,
-# split along '.', take the 1st and 2nd match and add a '.'     -> 2.5
-torch_version=`echo ${torch_config#*TORCH_VERSION=} | awk -F'.' '{print $1 "." $2 }'`
 printf " +        torch v$torch_version\n"
-
-# cut off everything up to and inc "ABI="
-# then read the first char
-ABI=`echo ${torch_config#*ABI=} | awk '{print substr ($0, 0, 1)}'`  # 0 or 1
-if [[ ! $ABI -eq 0 ]] && [[ ! $ABI -eq 1 ]]; then
-        printf "Error! ABI=$ABI, only '0' or '1' is valid. exiting...\n"
-        exit 1
-fi
-#convert from 0/1 to TRUE/FALSE for whl name later
-if [[ $ABI -eq 0 ]]; then
-        ABI="FALSE"
-else
-        ABI="TRUE"
-fi
 printf " +        ABI$ABI\n"
+printf " +        $python_tag\n"
 
-# python version
-# python3 --version                     -> Python 3.11.10
-# cuts along ' ', takes the 2nd match   -> 3.11.10
-# cuts along '.', takes the 2nd match   -> 11
-python_version=`$PYTHON_CMD --version | awk -F' ' '{print $2}' | awk -F'.' '{print $2}'`
-printf " +        cp${python_version}\n"
-
-# OS
-# Assume Linux. Always assume Linux
-os="linux"
 printf " +        $os\n"
 
-# ISA
-if  command -v lscpu 2>&1 >/dev/null; then
-        isa=`lscpu | grep "^Architecture:" | awk '{print $2}'`
-fi
 printf " +        $isa\n"
 
 #check for internet
@@ -186,15 +255,14 @@ fi
 #if a version was not given with '-v <version>'
 #try to find the newest match for your given env
 if [[ ${flash_attn_version} == "" ]]; then
-	wheels=`curl -s -L "https://api.github.com/repos/${repo}/releases" | jq -r ".[].assets[].name" | grep  "torch${torch_version}cxx11abi${ABI}-cp3${python_version}"`
-	num_wheels=$(echo "$wheels" | wc -l)
-	if [[ $num_wheels -eq 0 ]]; then
-		printf "\nError no matching wheel found for your environment\n.run './get-flash-attn -l | ./etc/show_wheel_availability.awk' to show available wheels. Exiting..."
+	wheels=$(curl -s -L "https://api.github.com/repos/${repo}/releases" | jq -r ".[].assets[].name" | grep "torch${torch_version}cxx11abi${ABI}-${python_tag}" || true)
+	if [[ -z "$wheels" ]]; then
+		printf "\nError no matching wheel found for your environment\nrun '%s -l' to list available wheels. Exiting...\n" "$0"
 		exit 0
 	fi
-	#assumes newest versions are at the bottom
+	# Pick newest wheel by version-sort over filenames.
 	# TODO should not automatically pick v3 wheels
-	flash_attn_wheel=$(echo "$wheels" | tail -n 1)
+	flash_attn_wheel=$(echo "$wheels" | sort -V | tail -n 1)
 
 	#get the version from the wheel
 	# we need it for the tag in the case of tridao, adn to import to test the install at the end
@@ -206,12 +274,17 @@ if [[ ${flash_attn_version} == "" ]]; then
 	fi
 else
 	#trust that a valid version was given, we will find out soon enough
-	flash_attn_wheel="flash_attn-${flash_attn_version}+cu${cuda_version}torch${torch_version}cxx11abi${ABI}-cp3${python_version}-cp3${python_version}-${os}_${isa}.whl"
+	flash_attn_wheel="flash_attn-${flash_attn_version}+cu${cuda_version}torch${torch_version}cxx11abi${ABI}-${python_tag}-${python_tag}-${os}_${isa}.whl"
+fi
+
+if [[ -z "${flash_attn_wheel:-}" ]]; then
+	printf "Error. Wheel name resolved to empty string. Exiting...\n"
+	exit 1
 fi
 
 url="https://github.com/${repo}/releases/download/$tag/$flash_attn_wheel"
 if [[ $list_wheels_flag -eq 1 ]]; then
-	if [[ $offline_flah -eq 1 ]]; then
+	if [[ "${offline_flag:-0}" -eq 1 ]]; then
 		printf "\ncant list available wheels without internet. exiting..."
 		exit 0
 	fi
@@ -222,14 +295,14 @@ fi
 
 printf " =>       $flash_attn_wheel\n"
 
-if [[ "$DRYRUN" -eq "1" ]]  || [[ $dryrun_flag -eq "1" ]] ; then
+if [[ "${DRYRUN:-0}" -eq 1 ]]  || [[ $dryrun_flag -eq 1 ]] ; then
         printf "\nDryrun! Printing commands instead:\n"
-	printf "         wget $url\n"
-	printf "         pip install $flash_attn_wheel\n"
-	exit 0
+		printf "         wget $url\n"
+		printf "         pip install $flash_attn_wheel\n"
+		exit 0
 fi
 
-if [[ "$OFFLINE" -eq 1 ]] || [[ "$offline_flag" -eq 1 ]]; then
+if [[ "${OFFLINE:-0}" -eq 1 ]] || [[ "$offline_flag" -eq 1 ]]; then
         printf "\nOffline! To install flash-attn, please run 'wget ...' on a system with internet and copy it over and then run 'pip install':\n"
         printf "          wget $url\n"
         printf "          scp $flash_attn_wheel <remote>:\n"
@@ -241,7 +314,7 @@ fi
 printf "\nRetrieving $flash_attn_wheel...\n"
 if [[ ! $url == "" ]]; then 
 wget $quiet $url 2>&1 > /dev/null ||{
-	printf "url not found! Maybe '$flash_attn_wheel' is not a supported configuration :(\nrun './get-flash-attn -l | ./etc/show_wheel_availability.awk' to show available wheels\nexiting...\n"
+	printf "url not found! Maybe '$flash_attn_wheel' is not a supported configuration :(\nrun '%s -l' to list available wheels\nexiting...\n" "$0"
 	exit 0
 }
 fi
@@ -289,13 +362,12 @@ if [[ $flash_attn_major_version -eq 2 ]]; then
 elif [[ $flash_attn_major_version -eq 3 ]]; then
 	import_cmd="import flash_attn_interface"
 else
-	printf "Unknown python major version '$flash_attn_major_version'. Can't test installation by importing. exiting...\n"
+	printf "Unknown flash-attn major version '$flash_attn_major_version'. Can't test installation by importing. exiting...\n"
 	exit 0
 
 fi
 
-#need the nasty double quots here because of the space in import_cmd
-python -c "'$import_cmd'" 2>get-flash-attn.err
+$PYTHON_CMD -c "$import_cmd" 2>get-flash-attn.err
 import_status=$? 
 
 if [[ $import_status == "0" ]]; then

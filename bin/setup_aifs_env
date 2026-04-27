@@ -8,7 +8,6 @@
 # In applying this licence, ECMWF does not waive the privileges and immunities
 # granted to it by virtue of its status as an intergovernmental organisation
 # nor does it submit to any jurisdiction.
-
 set -ex
 
 source $RAPS_AIFS_ROOT_DIR/.aifsenv 2>&1 > /dev/null
@@ -18,8 +17,87 @@ env_type=$ENV_TYPE #set in arch_dir/env.sh
 #env_type=hybrid_container #some libs installed in a container, other libs (ncluding anemoi srcs installed outside
 #env_type=full_container #Everything lives inside a container you built yourself
 
-version_ge() {
-	[ "$(printf "%s\n%s\n" "$1" "$2" | sort -V | tail -n 1)" = "$1" ]
+# Optionally keep anemoi-datasets on a specific version, controlled by arch env config.
+anemoi_datasets_version="${INPUT_ANEMOI_DATASETS_VERSION:-}"
+
+verify_torch_install() {
+	# Validate the currently active Python env really has a CUDA-capable torch build.
+	# This checks build-time CUDA support (is_built/use_cuda), not runtime device presence.
+	$install_prefix python - <<'PY'
+import re
+import sys
+
+try:
+    import torch
+except Exception as e:
+    print(f"Error. failed to import torch after install: {e}")
+    sys.exit(1)
+
+cfg = torch.__config__.show()
+cuda_built = False
+try:
+    cuda_built = bool(torch.backends.cuda.is_built())
+except Exception:
+    cuda_built = False
+
+use_cuda_on = bool(re.search(r"USE_CUDA=ON", cfg))
+cuda_ver = getattr(torch.version, "cuda", None)
+
+print("Torch validation snapshot:")
+print(f"  torch.__version__        = {torch.__version__}")
+print(f"  torch.version.cuda       = {cuda_ver}")
+print(f"  torch.backends.cuda.is_built() = {cuda_built}")
+print(f"  torch.cuda.is_available()      = {torch.cuda.is_available()}")
+print(f"  USE_CUDA=ON in config    = {use_cuda_on}")
+
+if not (cuda_built or use_cuda_on):
+    print("Error. CPU-only torch detected; expected CUDA-enabled torch.")
+    sys.exit(1)
+PY
+}
+
+torch_constraints_file=""
+torch_constraints_arg=""
+
+build_torch_constraints() {
+	# Capture install constraints and force pip to keep compatible versions during resolves.
+	local constraints_path="/tmp/aifs_torch_constraints.$$.$RANDOM.txt"
+	if ! $install_prefix python - <<'PY' > "$constraints_path"
+import importlib.metadata as md
+
+targets = ("torch", "torchvision", "torch-geometric")
+for package in targets:
+    try:
+        version = md.version(package)
+    except md.PackageNotFoundError:
+        continue
+    print(f"{package}=={version}")
+PY
+	then
+		: > "$constraints_path"
+		if [[ -n "$anemoi_datasets_version" ]]; then
+			echo "Warning. Could not inspect installed torch stack; continuing with anemoi-datasets pin only."
+		else
+			echo "Warning. Could not inspect installed torch stack; continuing without torch constraints."
+		fi
+	fi
+	if [[ -n "$anemoi_datasets_version" ]]; then
+		echo "anemoi-datasets==${anemoi_datasets_version}" >> "$constraints_path"
+	fi
+
+	torch_constraints_file="$constraints_path"
+	torch_constraints_arg="-c $torch_constraints_file"
+	echo "Using install constraints file: $torch_constraints_file"
+	cat "$torch_constraints_file"
+}
+
+pip_install_anemoi() {
+	# Ignore Requires-Python metadata only when explicitly requested by the arch env config.
+	if [[ "${PIP_IGNORE_REQUIRES_PYTHON:-0}" == "1" ]]; then
+		PIP_IGNORE_REQUIRES_PYTHON=1 $install_prefix $pip_cmd $torch_constraints_arg "$@"
+	else
+		$install_prefix $pip_cmd $torch_constraints_arg "$@"
+	fi
 }
 
 function set_grid_path() {
@@ -139,21 +217,23 @@ else
 fi
 
 #check python and venv is available
-#TODO fallback to python
-python_cmd="python3"
-command -v $python_cmd 2>&1 > /dev/null ||{
+# Allow overriding the bootstrap Python executable from the arch env file.
+# Example: export INPUT_PYTHON_EXECUTABLE=/path/to/python3.12
+python_cmd="${INPUT_PYTHON_EXECUTABLE:-python3}"
+command -v "$python_cmd" 2>&1 > /dev/null ||{
 	echo "Error. '$python_cmd' not found on path"
 	exit 1
 }
 
-$python_cmd -m venv -h 2>&1 > /dev/null ||{
+"$python_cmd" -m venv -h 2>&1 > /dev/null ||{
 	echo "Error. 'venv' module for $python_cmd not found"
 	exit 1
 }
 
 
-python_version=$($python_cmd --version | awk '{print $2}' | sed 's/\.[0-9]\+$//')
-if ! version_ge "$python_version" "3.10"; then
+python_version=$("$python_cmd" --version | awk '{print $2}' | sed 's/\.[0-9]\+$//')
+is_python_supported=$(echo $python_version'>='3.10 | bc -l)
+if [ $is_python_supported -eq 0 ]; then
 	echo "Error. Your python version was detected as $python_version"
 	echo "Versions < 3.10 weren't able to install anemoi-* using pyproject.toml"
 	echo "Please upgrade python to at least 3.10. exiting..."
@@ -163,7 +243,7 @@ fi
 #check if venv path exists, if not create it
 if [ ! -d $venv_path ]; then
 	echo "Creating a fresh venv in $venv_path"
-	$python_cmd -m venv $venv_path
+	"$python_cmd" -m venv $venv_path
 fi
 
 #create symlink to venv in build dir
@@ -227,26 +307,25 @@ pip_cmd="pip $pip_cache install $offline_cmd"
 set_grid_path
 
 #install editable versions of source code
-if [ "$env_type" != "full_container" ]; then
-	isa=`lscpu | grep "^Architecture:" | awk '{print $2}'`
-	if [[ $isa == 'aarch64' ]]; then
-		# Keep the default pip index for ordinary dependencies like typing-extensions,
-		# while still allowing torch wheels to come from the PyTorch wheel index.
-		$install_prefix $pip_cmd "torch==2.10.*" torchvision triton --extra-index-url https://download.pytorch.org/whl/cu128
-		#pytorch trace profiling doesnt work on aarch64 with 'with_stack=True'
-		sed -i 's/with_stack=True/with_stack=False/g' $RAPS_AIFS_BUILD_DIR/sources/anemoi-core/training/src/anemoi/training/diagnostics/profilers.py
-	#check for amd gpu, if so install rocm-enabled torch
-	elif command -v rocm-smi 2>&1 >/dev/null; then
-		$install_prefix $pip_cmd "torch==2.10.*" torchvision --extra-index-url https://download.pytorch.org/whl/rocm6.3
-	else
-		# Install the plain PyPI torch release on the default x86_64 path so we
-		# get version 2.10.0 rather than a CUDA-tagged local build like +cu128.
-		$install_prefix $pip_cmd "torch===2.10.0" torchvision triton
-	fi
+	if [ "$env_type" != "full_container" ]; then
+		isa=`lscpu | grep "^Architecture:" | awk '{print $2}'`
+		if [[ $isa == 'aarch64' ]]; then
+			$install_prefix $pip_cmd torch torchvision --index-url https://download.pytorch.org/whl/cu128
+			verify_torch_install
+			#pytorch trace profiling doesnt work on aarch64 with 'with_stack=True'
+			sed -i 's/with_stack=True/with_stack=False/g' $RAPS_AIFS_BUILD_DIR/sources/anemoi-core/training/src/anemoi/training/diagnostics/profilers.py
+		#check for amd gpu, if so install rocm-enabled torch
+		elif command -v rocm-smi 2>&1 >/dev/null; then
+			$install_prefix $pip_cmd "torch>=2.6.0" torchvision --index-url https://download.pytorch.org/whl/rocm6.3
+		fi
 
 	#install pinned version of anemoi-utils
 	#needed while itt380 is on commit - bb7a045 - some mlflow functionality was moved from utils to training in 0.4.29
 	$install_prefix $pip_cmd anemoi-utils==0.4.28  2>&1 > /dev/null
+	if [[ -n "$anemoi_datasets_version" ]]; then
+		# Keep a compatible anemoi-datasets API for the current anemoi-training source tree when requested.
+		$install_prefix $pip_cmd "anemoi-datasets==${anemoi_datasets_version}" 2>&1 > /dev/null
+	fi
 
 	#Install models and training
 	if [[ -d $RAPS_AIFS_BUILD_DIR/sources/anemoi-core ]]; then
@@ -256,25 +335,17 @@ if [ "$env_type" != "full_container" ]; then
 		anemoi_models_dir=$RAPS_AIFS_BUILD_DIR/sources/anemoi-models/models
 		anemoi_training_dir=$RAPS_AIFS_BUILD_DIR/sources/anemoi-training/training
 	fi
+
+	build_torch_constraints
+
 	cd $anemoi_models_dir
-	$install_prefix $pip_cmd -e . 2>&1 > /dev/null
+	pip_install_anemoi -e . 2>&1 > /dev/null
+	verify_torch_install
 
 	cd $anemoi_training_dir
-	$install_prefix $pip_cmd -e . 2>&1 > /dev/null
-	$install_prefix $pip_cmd -e .[profile] 2>&1 > /dev/null
-
-	#check if flash_attn is available
-	#if not try install it
-	$install_prefix pip list | grep "flash-attn\|flash_attn" ||{
-		echo "Flash-attn not found! will try install a prebuilt wheel from github"
-		flash_attn_version=${INPUT_FLASH_ATTN_VERSION:-2.7.4.post1}
-		flash_attn_args=(-v "$flash_attn_version")
-		if [[ -n "${INPUT_FLASH_ATTN_WHEEL_SOURCE:-}" ]]; then
-			flash_attn_args+=(-s "$INPUT_FLASH_ATTN_WHEEL_SOURCE")
-		fi
-		OFFLINE=$OFFLINE $install_prefix $RAPS_AIFS_ROOT_DIR/bin/get-flash-attn "${flash_attn_args[@]}"
-	}
-
-
+	pip_install_anemoi -e . 2>&1 > /dev/null
+	verify_torch_install
+	pip_install_anemoi -e '.[profile]' 2>&1 > /dev/null
+	verify_torch_install
 
 fi

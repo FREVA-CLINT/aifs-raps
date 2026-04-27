@@ -101,15 +101,15 @@ else
 fi
 
 #link the training/config dir in builddir and add the raps config to it
-rm -rf $RAPS_AIFS_BUILD_DIR/config
+rm -rf "$RAPS_AIFS_BUILD_DIR/config"
 echo "symlinking $anemoi_training_src_dir/src/anemoi/training/config as $RAPS_AIFS_BUILD_DIR/config"
-ln -s $anemoi_training_src_dir/training/src/anemoi/training/config $RAPS_AIFS_BUILD_DIR
+ln -s "$anemoi_training_src_dir/training/src/anemoi/training/config" "$RAPS_AIFS_BUILD_DIR/config"
+
+# Ensure subdirs exist before placing local override symlinks.
+mkdir -p "$RAPS_AIFS_BUILD_DIR/config/data" "$RAPS_AIFS_BUILD_DIR/config/training"
 #make a symlink to raps.yaml inside config so all the config files are together
 echo "Symlinking $RAPS_AIFS_ROOT_DIR/etc/aifs/raps.yaml as $anemoi_training_src_dir/src/aifs/training/config/raps.yaml"
 #TODO automate these symlinks
-rm -f $RAPS_AIFS_BUILD_DIR/config/raps.yaml
-rm -f $RAPS_AIFS_BUILD_DIR/config/data/zarr_no_insolation.yaml
-rm -f $RAPS_AIFS_BUILD_DIR/config/training/less_memory_loss_ensemble.yaml
-ln -s $RAPS_AIFS_ROOT_DIR/etc/aifs/config/raps.yaml $RAPS_AIFS_BUILD_DIR/config/
-ln -s $RAPS_AIFS_ROOT_DIR/etc/aifs/config/zarr_no_insolation.yaml $RAPS_AIFS_BUILD_DIR/config/data/
-ln -s $RAPS_AIFS_ROOT_DIR/etc/aifs/config/less_memory_loss_ensemble.yaml  $RAPS_AIFS_BUILD_DIR/config/training/
+ln -sfn "$RAPS_AIFS_ROOT_DIR/etc/aifs/config/raps.yaml" "$RAPS_AIFS_BUILD_DIR/config/raps.yaml"
+ln -sfn "$RAPS_AIFS_ROOT_DIR/etc/aifs/config/zarr_no_insolation.yaml" "$RAPS_AIFS_BUILD_DIR/config/data/zarr_no_insolation.yaml"
+ln -sfn "$RAPS_AIFS_ROOT_DIR/etc/aifs/config/less_memory_loss_ensemble.yaml" "$RAPS_AIFS_BUILD_DIR/config/training/less_memory_loss_ensemble.yaml"

@@ -272,7 +272,7 @@ if [[ $RAPS_AIFS_ENV_TYPE == "hybrid_container" ]]; then
 fi
 
 #ensure venv bin is on PATH
-if [[ $RAPS_AIFS_ENV_TYPE == "venv" ]]; then
+if [[ $RAPS_AIFS_ENV_TYPE == "venv" ]] || [[ $RAPS_AIFS_ENV_TYPE == "conda" ]]; then
 	export PATH="$RAPS_AIFS_BUILD_DIR/venv/bin:$PATH"
 fi
 
@@ -386,7 +386,12 @@ flash_attn_available=$(grep -q "^flash_attn\|flash-attn" $rundir/python_env.txt 
 #TODO broken with nvidia containers, cant match 'torch @ file:///opt/transfer/torch-2.5.0a0%2Be000cf0ad...'
 #But they have flash attn anyway so we get lucky and pass
 torch_version=$(grep "^torch=" $rundir/python_env.txt | awk -F'[.=]' '/^torch==/ {print $3 "." $4}') 
-flex_attn_available=$(echo $torch_version'>='2.5 | bc -l)
+# Compare semver-like values safely (e.g. 2.10 > 2.5).
+if [[ "$(printf '%s\n' "$torch_version" "2.5" | sort -V | tail -n 1)" == "$torch_version" ]]; then
+	flex_attn_available=1
+else
+	flex_attn_available=0
+fi
 
 if [[ $flash_attn_available -eq 1 ]]; then
 	ver_echo "Flash attn is installed"
