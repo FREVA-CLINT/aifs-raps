@@ -1,12 +1,5 @@
 # DKRZ's fork of the AIFS-RAPS
-This code measures the system performance of Anemoi trainings indicative for training AICON.
-
-1. `cd aifs-raps`
-2. Create a configuration for your system: `arch/foo/bar/aifs_env.sh`
-3. `./aifs-build --build-dir build --arch arch/foo/bar`
-4. Expand training data using `./bin/aifs-clone-dataset /my-path-to/aifs-benchmarking-ea-an-oper-0001-mars-o800-2023-2023-6h-v1.zarr/ /my-path-to/aifs-benchmarking-o800-10years-cloned.zarr 14240`
-5. `cd launchers/SLURM/DWD2026`
-6. `sbatch throughput.DWD2026.slurm`
+This code measures the system performance of Anemoi trainings indicative for training AICON. See `README-setup.md` on how to perform the benchmark.
 
 -------------------------------------------------------------------------------
 
