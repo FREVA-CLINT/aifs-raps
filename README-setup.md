@@ -18,7 +18,7 @@ All relevant SLURM files are in `launchers/SLURM/DKRZ2026/`.
 cd aifs-raps
 ```
 
-2. Create a configuration for your system: `arch/foo/bar/aifs_env.sh`
+2. Create a configuration for your system: `arch/foo/bar/aifs_env.sh`. Use `arch/dkrz/hlre5/aifs_env.sh` for python3.13.
 
 2.1. Optional: set an explicit Python executable in the selected `aifs_env.sh`:
 
